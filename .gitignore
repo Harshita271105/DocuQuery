@@ -1,0 +1,19 @@
+
+# Python virtual environment
+.venv/
+
+# Environment variables and API secrets
+.env
+.env.*
+
+# Python cache files
+__pycache__/
+*.py[cod]
+
+# Local PDF documents
+data/*.pdf
+
+# Test and coverage cache
+.pytest_cache/
+.coverage
+htmlcov/
