@@ -1,5 +1,5 @@
-
 import pymupdf
+from chunk_text import chunk_text
 
 pdf_path = "data/ar2024-25.pdf"
 
@@ -35,6 +35,24 @@ print("Pages with no extractable text:", empty_pages)
 
 print("Sample text from page 2:")
 print(pages[1]["text"][:300])
+
+
+all_chunks = []
+
+for page_data in pages:
+    page_chunks = chunk_text(page_data["text"])
+
+    for chunk in page_chunks:
+        all_chunks.append({
+            "page_number": page_data["page_number"],
+            "text": chunk
+        })
+
+print("Total chunks:", len(all_chunks))
+print("First chunk source page:", all_chunks[0]["page_number"])
+print("First chunk preview:")
+print(all_chunks[0]["text"][:300])
+
 
 
 document.close()
