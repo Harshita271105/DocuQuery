@@ -99,3 +99,76 @@ def test_answer_question_retrieves_only_once():
     mock_retrieve.assert_called_once()
     mock_generate.assert_called_once_with("Sample question?", passages)
     assert result == expected_result
+
+
+def test_retrieve_passages_filters_low_similarity():
+    """Passages below the configured threshold should be excluded."""
+
+    import numpy as np
+    from rag_pipeline import MIN_SIMILARITY
+
+    chunks = [
+        {"page_number": 1, "text": "Relevant report passage."},
+        {"page_number": 2, "text": "Irrelevant report passage."},
+    ]
+
+    class FakeModel:
+        def encode(self, texts, **kwargs):
+            return np.array([[1.0, 0.0]], dtype="float32")
+
+    class FakeIndex:
+        ntotal = 2
+
+        def search(self, query_embedding, k):
+            return (
+                np.array([[0.75, MIN_SIMILARITY - 0.10]], dtype="float32"),
+                np.array([[0, 1]], dtype="int64"),
+            )
+
+    results = retrieve_passages(
+        "Question about the report",
+        chunks,
+        FakeModel(),
+        FakeIndex(),
+    )
+
+    assert len(results) == 1
+    assert results[0]["page_number"] == 1
+    assert results[0]["score"] >= MIN_SIMILARITY
+
+
+def test_retrieve_passages_returns_empty_when_all_scores_are_low():
+    """No passages should remain if every score is below the threshold."""
+
+    import numpy as np
+    from rag_pipeline import MIN_SIMILARITY
+
+    chunks = [
+        {"page_number": 1, "text": "Unrelated passage one."},
+        {"page_number": 2, "text": "Unrelated passage two."},
+    ]
+
+    class FakeModel:
+        def encode(self, texts, **kwargs):
+            return np.array([[1.0, 0.0]], dtype="float32")
+
+    class FakeIndex:
+        ntotal = 2
+
+        def search(self, query_embedding, k):
+            return (
+                np.array(
+                    [[MIN_SIMILARITY - 0.10, MIN_SIMILARITY - 0.15]],
+                    dtype="float32",
+                ),
+                np.array([[0, 1]], dtype="int64"),
+            )
+
+    results = retrieve_passages(
+        "Unrelated question",
+        chunks,
+        FakeModel(),
+        FakeIndex(),
+    )
+
+    assert results == []

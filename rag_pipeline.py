@@ -15,6 +15,7 @@ LLM_MODEL = "gemini-3.5-flash-lite"
 CHUNK_SIZE = 1000
 OVERLAP = 200
 TOP_K = 3
+MIN_SIMILARITY = 0.40
 
 
 load_dotenv()
@@ -76,8 +77,9 @@ def build_search_index(chunks, model):
     return index
 
 
+
 def retrieve_passages(question, chunks, model, index):
-    """Retrieve the most relevant passages and their similarity scores."""
+    """Retrieve relevant passages that meet the similarity threshold."""
     if not question.strip():
         return []
 
@@ -97,6 +99,10 @@ def retrieve_passages(question, chunks, model, index):
 
     for score, chunk_index in zip(scores[0], indices[0]):
         if chunk_index < 0:
+            continue
+
+        # Skip passages below the minimum relevance threshold.
+        if float(score) < MIN_SIMILARITY:
             continue
 
         chunk = chunks[int(chunk_index)]
@@ -193,9 +199,9 @@ def answer_question(question, chunks, model, index):
     return generate_answer(question, passages)
 
 
+
 def main():
     print("Loading document...")
-
     chunks = load_chunks(PDF_PATH)
 
     if not chunks:
