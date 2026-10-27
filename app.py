@@ -1,4 +1,5 @@
 
+import hashlib
 from pathlib import Path
 
 import streamlit as st
@@ -8,9 +9,7 @@ from index_cache import load_or_build_index
 from rag_pipeline import (
     PDF_PATH,
     MODEL_NAME,
-    load_chunks,
     answer_question,
-    retrieve_passages,
 )
 
 # --------------------------------------------------
@@ -22,6 +21,10 @@ st.set_page_config(
     layout="wide",
 )
 
+DEFAULT_PDF_PATH = Path(PDF_PATH)
+UPLOAD_DIR = Path("storage") / "uploads"
+MAX_UPLOAD_SIZE_MB = 50
+
 # --------------------------------------------------
 # Header
 # --------------------------------------------------
@@ -30,9 +33,9 @@ st.subheader("AI-Powered Document Question Answering")
 
 st.markdown(
     """
-    Ask questions about the **ONGC Annual Report 2024–25**.
-    DocuQuery searches relevant document passages and uses AI
-    to generate answers grounded in the retrieved context.
+    Upload a PDF or use the default **ONGC Annual Report 2024–25**.
+    Ask questions and receive AI-generated answers grounded in
+    relevant document passages.
     """
 )
 
@@ -40,21 +43,7 @@ st.divider()
 
 
 # --------------------------------------------------
-# Load and cache document chunks
-# --------------------------------------------------
-@st.cache_data(show_spinner=False)
-def get_document_chunks(pdf_path):
-    if not Path(pdf_path).exists():
-        raise FileNotFoundError(
-            f"PDF not found: {pdf_path}. "
-            "Check that the source document exists."
-        )
-
-    return load_chunks(pdf_path)
-
-
-# --------------------------------------------------
-# Load and cache the embedding model
+# Cache the embedding model
 # --------------------------------------------------
 @st.cache_resource(show_spinner=False)
 def get_embedding_model():
@@ -62,48 +51,149 @@ def get_embedding_model():
 
 
 # --------------------------------------------------
-# Initialize the document and search index
+# Save uploaded PDFs safely
+# --------------------------------------------------
+def save_uploaded_pdf(uploaded_file):
+    """Save an uploaded PDF using a content-based filename."""
+    file_bytes = uploaded_file.getvalue()
+
+    if len(file_bytes) > MAX_UPLOAD_SIZE_MB * 1024 * 1024:
+        raise ValueError(
+            f"Please upload a PDF smaller than {MAX_UPLOAD_SIZE_MB} MB."
+        )
+
+    if not file_bytes.startswith(b"%PDF-"):
+        raise ValueError(
+            "The uploaded file does not appear to be a valid PDF."
+        )
+
+    file_hash = hashlib.sha256(file_bytes).hexdigest()
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+    destination = UPLOAD_DIR / f"{file_hash}.pdf"
+
+    if not destination.exists():
+        destination.write_bytes(file_bytes)
+
+    return destination
+
+
+# --------------------------------------------------
+# Select the source document
+# --------------------------------------------------
+with st.sidebar:
+    st.header("📁 Select Document")
+
+    document_choice = st.radio(
+        "Choose a document source",
+        ["Default ONGC report", "Upload your own PDF"],
+        key="document_choice",
+    )
+
+    uploaded_file = None
+
+    if document_choice == "Upload your own PDF":
+        uploaded_file = st.file_uploader(
+            "Upload a PDF document",
+            type=["pdf"],
+            help=f"Maximum file size: {MAX_UPLOAD_SIZE_MB} MB.",
+            key="pdf_uploader",
+        )
+
+    st.divider()
+
+    st.header("ℹ️ About DocuQuery")
+    st.write("**Embeddings:** Sentence Transformers")
+    st.write("**Vector search:** FAISS")
+    st.write("**Answer generation:** Google Gemini")
+    st.write("**Interface:** Streamlit")
+
+
+# --------------------------------------------------
+# Resolve the selected PDF
+# --------------------------------------------------
+selected_pdf = None
+
+if document_choice == "Default ONGC report":
+    selected_pdf = DEFAULT_PDF_PATH
+
+elif uploaded_file is not None:
+    try:
+        selected_pdf = save_uploaded_pdf(uploaded_file)
+    except (OSError, ValueError) as error:
+        st.error(str(error))
+        st.stop()
+else:
+    st.info("Upload a PDF in the sidebar to begin.")
+    st.stop()
+
+if not selected_pdf.exists():
+    st.error(f"Document not found: {selected_pdf}")
+    st.stop()
+
+
+# --------------------------------------------------
+# Initialize the selected document and its index
 # --------------------------------------------------
 try:
     with st.status(
-        "Preparing DocuQuery...",
+        "Preparing your document...",
         expanded=True,
     ) as status:
         st.write("Step 1/2: Loading the embedding model...")
         model = get_embedding_model()
 
-        st.write("Step 2/2: Loading the saved document index...")
+        st.write("Step 2/2: Loading or building the document index...")
         chunks, index = load_or_build_index(
-            PDF_PATH,
+            selected_pdf,
             MODEL_NAME,
             model,
         )
 
         status.update(
-            label="DocuQuery is ready!",
+            label="Document is ready!",
             state="complete",
             expanded=False,
         )
+
 except Exception as error:
-    st.error(
-        "DocuQuery could not initialize. "
-        "Check the PDF path, dependencies, and index cache."
-    )
+    st.error("DocuQuery could not prepare the selected PDF.")
     with st.expander("Technical error details"):
         st.exception(error)
-
     st.stop()
 
 
 # --------------------------------------------------
-# Document overview
+# Document metadata
 # --------------------------------------------------
-st.markdown("### Document Overview")
+try:
+    import pymupdf
+
+    with pymupdf.open(selected_pdf) as document:
+        page_count = len(document)
+
+except Exception as error:
+    st.error("Could not read the selected PDF's page count.")
+    with st.expander("Technical error details"):
+        st.exception(error)
+    st.stop()
+
+document_hash = hashlib.sha256(
+    str(selected_pdf.resolve()).encode("utf-8")
+).hexdigest()
+
+# Reset history when the selected document changes.
+if st.session_state.get("active_document_hash") != document_hash:
+    st.session_state.active_document_hash = document_hash
+    st.session_state.chat_history = []
+
+st.markdown("### 📄 Document Overview")
+st.caption(f"Selected document: {selected_pdf.name}")
 
 col1, col2, col3 = st.columns(3)
 
 with col1:
-    st.metric("Document pages", "684")
+    st.metric("Document pages", page_count)
 
 with col2:
     st.metric("Searchable chunks", f"{len(chunks):,}")
@@ -115,7 +205,7 @@ st.divider()
 
 
 # --------------------------------------------------
-# Conversation history for the current session
+# Conversation history
 # --------------------------------------------------
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
@@ -129,10 +219,7 @@ st.markdown("### 💬 Ask your document")
 with st.form("question_form"):
     question = st.text_area(
         "Enter your question",
-        placeholder=(
-            "Example: What is ONGC's target year for "
-            "achieving net-zero carbon emissions?"
-        ),
+        placeholder="Ask a question about the selected PDF...",
         height=100,
         max_chars=2000,
     )
@@ -145,13 +232,8 @@ with st.form("question_form"):
 
 
 # --------------------------------------------------
-# Retrieve passages and generate an answer
+# Answer generation and sources
 # --------------------------------------------------
-
-# --------------------------------------------------
-# Retrieve passages and generate an answer
-# --------------------------------------------------
-
 if submitted:
     cleaned_question = question.strip()
 
@@ -170,7 +252,6 @@ if submitted:
                     index,
                 )
 
-            # Save the question and result for this session.
             st.session_state.chat_history.append(
                 {
                     "question": cleaned_question,
@@ -179,7 +260,6 @@ if submitted:
                 }
             )
 
-            st.divider()
             st.markdown("### 📝 Answer")
             st.write(result["answer"])
 
@@ -188,15 +268,10 @@ if submitted:
             sources = result.get("sources", [])
 
             if sources:
-                st.caption(
-                    "Review these passages to verify the answer "
-                    "against the original annual report."
-                )
-
                 for number, source in enumerate(sources, start=1):
                     page_number = source.get("page_number", "Unknown")
-                    source_text = source.get("text", "").strip()
                     score = source.get("score")
+                    source_text = source.get("text", "")
 
                     label = f"Source {number} · PDF page {page_number}"
 
@@ -204,67 +279,23 @@ if submitted:
                         label += f" · Similarity {score:.3f}"
 
                     with st.expander(label):
-                        st.markdown(f"**PDF page: {page_number}**")
+                        st.write(source_text)
 
                         if score is not None:
                             st.caption(
-                                f"Retrieval similarity score: {score:.3f}. "
-                                "This is not a measure of answer correctness."
+                                f"Retrieval similarity: {score:.3f}. "
+                                "This is not a confidence percentage."
                             )
-
-                        st.write(
-                            source_text or "No passage text available."
-                        )
-
             else:
                 st.info(
-                    "No source passages were returned. "
-                    "The document may not contain enough relevant evidence."
+                    "No relevant passages were found in this document."
                 )
 
         except Exception as error:
-            st.error(
-                "An error occurred while processing your question. "
-                "Please try again."
-            )
-
+            st.error("An error occurred while answering your question.")
             with st.expander("Technical error details"):
                 st.exception(error)
 
-
-# --------------------------------------------------
-# Sidebar
-# --------------------------------------------------
-with st.sidebar:
-    st.header("ℹ️ About DocuQuery")
-
-    st.write("**Source:** ONGC Annual Report 2024–25")
-    st.write("**Embedding model:** `all-MiniLM-L6-v2`")
-    st.write("**Vector search:** FAISS")
-    st.write("**Answer generation:** Google Gemini")
-    st.write("**Interface:** Streamlit")
-
-    st.divider()
-
-    st.markdown("**How it works**")
-    st.caption(
-        "1. Extract text from the PDF\n\n"
-        "2. Convert text into searchable chunks\n\n"
-        "3. Retrieve relevant passages\n\n"
-        "4. Generate an answer using Gemini\n\n"
-        "5. Review the source passages"
-    )
-
-    st.divider()
-
-    st.caption(
-        "AI-generated answers can contain errors. "
-        "Verify important claims using the displayed source passages "
-        "and the original document."
-    )
-
-
-    
 
 # --------------------------------------------------
 # Conversation history display
@@ -282,8 +313,6 @@ if st.session_state.chat_history:
             st.session_state.chat_history = []
             st.rerun()
 
-    # Exclude the latest question because its answer is already
-    # displayed in the main answer section.
     previous_questions = st.session_state.chat_history[:-1]
 
     for item in reversed(previous_questions):
@@ -291,16 +320,12 @@ if st.session_state.chat_history:
             st.markdown("**Answer**")
             st.write(item["answer"])
 
-            if item["sources"]:
-                st.markdown("**Sources**")
+            for source in item["sources"]:
+                page_number = source.get("page_number", "Unknown")
+                score = source.get("score")
+                label = f"PDF page {page_number}"
 
-                for source in item["sources"]:
-                    page_number = source.get("page_number", "Unknown")
-                    score = source.get("score")
+                if score is not None:
+                    label += f" · Similarity {score:.3f}"
 
-                    label = f"PDF page {page_number}"
-
-                    if score is not None:
-                        label += f" · Similarity {score:.3f}"
-
-                    st.caption(label)
+                st.caption(label)
