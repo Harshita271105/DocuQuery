@@ -1,6 +1,6 @@
 import hashlib
 from pathlib import Path
-
+import html
 import pymupdf
 import streamlit as st
 from sentence_transformers import SentenceTransformer
@@ -356,32 +356,64 @@ with st.expander(
         st.caption(f"Page {int(preview_page)} of {page_count}")
 
         st.image(
-            page_image,
-            caption=f"{selected_pdf.name} — Page {int(preview_page)}",
-            use_container_width=True,
-        )
+    page_image,
+    caption=f"{selected_pdf.name} — Page {int(preview_page)}",
+    width=700,
+)
 
     except Exception as error:
         st.error(f"Could not preview this page: {error}")
 
 
+
 # --------------------------------------------------
 # Question input
 # --------------------------------------------------
-st.markdown("### 💬 Ask your document")
+st.markdown("## 💬 Ask your document")
+st.caption(
+    "Ask a specific question about the selected PDF. "
+    "Answers are generated from relevant document passages."
+)
+
+st.markdown("**Need an idea? Try asking:**")
+
+suggestion_col1, suggestion_col2 = st.columns(2)
+
+with suggestion_col1:
+    if st.button(
+        "📊 Summarize key findings",
+        use_container_width=True,
+    ):
+        st.session_state["suggested_question"] = (
+            "Summarize the key findings of this document."
+        )
+
+with suggestion_col2:
+    if st.button(
+        "📌 Identify important figures",
+        use_container_width=True,
+    ):
+        st.session_state["suggested_question"] = (
+            "What are the most important figures and statistics in this document?"
+        )
 
 with st.form("question_form"):
     question = st.text_area(
         "Enter your question",
-        placeholder="Ask a question about the selected PDF...",
-        height=100,
+        value=st.session_state.get("suggested_question", ""),
+        placeholder="e.g. What were the major financial results?",
+        height=120,
         max_chars=2000,
     )
+
     submitted = st.form_submit_button(
         "🔍 Find Answer",
         type="primary",
         use_container_width=True,
     )
+
+if submitted:
+    st.session_state["suggested_question"] = ""
 
 
 # --------------------------------------------------
@@ -446,7 +478,6 @@ if latest_result:
             source_text = source.get("text", "")
 
             title = f"Source {number} · Page {page_number}"
-
             if score is not None:
                 title += f" · Similarity {score:.3f}"
 
@@ -456,12 +487,12 @@ if latest_result:
                 with source_col:
                     st.markdown(f"**{title}**")
 
-                with action_col:
-                    try:
-                        source_page = int(page_number)
-                    except (TypeError, ValueError):
-                        source_page = None
+                try:
+                    source_page = int(page_number)
+                except (TypeError, ValueError):
+                    source_page = None
 
+                with action_col:
                     if (
                         source_page is not None
                         and 1 <= source_page <= page_count
@@ -478,7 +509,21 @@ if latest_result:
                             use_container_width=True,
                         )
 
-                st.write(source_text)
+                import html
+
+                safe_source_text = html.escape(str(source_text))
+                st.markdown(
+                    f"""
+                    <div style="
+                        font-size: 14px;
+                        font-weight: 400;
+                        line-height: 1.7;
+                        overflow-wrap: anywhere;
+                        white-space: pre-wrap;
+                    ">{safe_source_text}</div>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
                 if score is not None:
                     st.caption(
@@ -488,35 +533,65 @@ if latest_result:
     else:
         st.info("No relevant passages were found in this document.")
 
-
 # --------------------------------------------------
-# Conversation history
+# Conversation history display
 # --------------------------------------------------
 if st.session_state.chat_history:
     st.divider()
+
     history_col, button_col = st.columns([4, 1])
 
     with history_col:
-        st.markdown("### 🕘 Previous Questions")
+        st.markdown("## 🕘 Conversation History")
+        st.caption("Revisit your previous questions and answers.")
 
     with button_col:
-        if st.button("🗑️ Clear History", use_container_width=True):
+        st.write("")
+        if st.button(
+            "🗑️ Clear history",
+            use_container_width=True,
+        ):
             st.session_state.chat_history = []
             st.session_state.pop(latest_result_key, None)
             st.rerun()
 
     previous_questions = st.session_state.chat_history[:-1]
-    for item in reversed(previous_questions):
-        with st.expander(item["question"]):
+
+    if not previous_questions:
+        st.info(
+            "Your earlier questions will appear here "
+            "after you ask another question."
+        )
+
+    for number, item in enumerate(
+        reversed(previous_questions),
+        start=1,
+    ):
+        with st.expander(
+            f"💬 {item['question']}",
+            expanded=False,
+        ):
             st.markdown("**Answer**")
             st.write(item["answer"])
 
-            for source in item.get("sources", []):
-                page_number = source.get("page_number", "Unknown")
-                score = source.get("score")
-                label = f"PDF page {page_number}"
+            sources = item.get("sources", [])
 
-                if score is not None:
-                    label += f" · Similarity {score:.3f}"
+            if sources:
+                st.markdown("**Sources**")
 
-                st.caption(label)
+                for source in sources:
+                    page_number = source.get(
+                        "page_number",
+                        "Unknown",
+                    )
+                    score = source.get("score")
+
+                    source_label = f"PDF page {page_number}"
+
+                    if score is not None:
+                        source_label += (
+                            f" · Similarity {score:.3f}"
+                        )
+
+                    st.caption(f"📄 {source_label}")
+
