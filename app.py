@@ -18,23 +18,111 @@ st.set_page_config(
     layout="wide",
 )
 
+
+# --------------------------------------------------
+# Custom UI styling
+# --------------------------------------------------
+st.markdown(
+    """
+    <style>
+    /* Main content spacing */
+    .block-container {
+        padding-top: 2rem;
+        padding-bottom: 3rem;
+        max-width: 1200px;
+    }
+
+    /* Main title */
+    h1 {
+        font-weight: 750;
+        letter-spacing: -1px;
+    }
+
+    /* Section headings */
+    h2, h3 {
+        letter-spacing: -0.3px;
+    }
+
+    /* Metric cards */
+    [data-testid="stMetric"] {
+        background-color: var(--secondary-background-color);
+        padding: 18px;
+        border-radius: 12px;
+        border: 1px solid rgba(128, 128, 128, 0.2);
+    }
+
+    /* Buttons */
+    .stButton > button,
+    .stFormSubmitButton > button {
+        border-radius: 9px;
+        font-weight: 600;
+        min-height: 42px;
+        transition: border-color 0.2s ease;
+    }
+
+    /* Expanders */
+    [data-testid="stExpander"] {
+        border-radius: 10px;
+        border-color: rgba(128, 128, 128, 0.25);
+    }
+
+    /* File uploader */
+    [data-testid="stFileUploader"] {
+        border-radius: 10px;
+    }
+
+    /* Text input areas */
+    .stTextArea textarea {
+        border-radius: 9px;
+        line-height: 1.6;
+    }
+
+    /* Sidebar spacing */
+    [data-testid="stSidebar"] .block-container {
+        padding-top: 1.5rem;
+    }
+
+    /* Subtle horizontal dividers */
+    hr {
+        margin-top: 1.5rem;
+        margin-bottom: 1.5rem;
+        opacity: 0.45;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 DEFAULT_PDF_PATH = Path(PDF_PATH)
 UPLOAD_DIR = Path("storage") / "uploads"
 MAX_UPLOAD_SIZE_MB = 50
 
 
+
 # --------------------------------------------------
 # Header
 # --------------------------------------------------
-st.title("📄 DocuQuery")
-st.subheader("AI-Powered Document Question Answering")
+header_col, badge_col = st.columns([4, 1])
+
+with header_col:
+    st.title("📄 DocuQuery")
+    st.markdown(
+        "### Ask questions. Find answers. Verify every source."
+    )
+
+with badge_col:
+    st.write("")
+    st.write("")
+    st.success("AI-Powered RAG")
+
 st.markdown(
     """
-    Upload a PDF or use the default **ONGC Annual Report 2024–25**.
-    Ask questions and receive AI-generated answers grounded in relevant
-    document passages.
+    Upload your own PDF or explore the **ONGC Annual Report 2024–25**.
+    DocuQuery retrieves relevant passages and generates answers grounded
+    in your selected document.
     """
 )
+
 st.divider()
 
 
@@ -73,33 +161,52 @@ def save_uploaded_pdf(uploaded_file):
     return destination
 
 
+
 # --------------------------------------------------
-# Select the source document
+# Sidebar: document selection and app information
 # --------------------------------------------------
 with st.sidebar:
-    st.header("📁 Select Document")
+    st.markdown("## 📂 DocuQuery")
+    st.caption("Your document research assistant")
+
+    st.divider()
+
+    st.markdown("### Select your document")
 
     document_choice = st.radio(
-        "Choose a document source",
+        "Document source",
         ["Default ONGC report", "Upload your own PDF"],
         key="document_choice",
+        help="Choose the report to search and ask questions about.",
     )
 
     uploaded_file = None
+
     if document_choice == "Upload your own PDF":
         uploaded_file = st.file_uploader(
-            "Upload a PDF document",
+            "Choose a PDF file",
             type=["pdf"],
             help=f"Maximum file size: {MAX_UPLOAD_SIZE_MB} MB.",
             key="pdf_uploader",
         )
 
     st.divider()
-    st.header("ℹ️ About DocuQuery")
-    st.write("**Embeddings:** Sentence Transformers")
-    st.write("**Vector search:** FAISS")
-    st.write("**Answer generation:** Google Gemini")
-    st.write("**Interface:** Streamlit")
+
+    st.markdown("### ⚙️ How DocuQuery works")
+
+    with st.expander("Technology stack"):
+        st.markdown(
+            """
+            - **Embeddings:** Sentence Transformers
+            - **Vector search:** FAISS
+            - **Answer generation:** Google Gemini
+            - **PDF processing:** PyMuPDF
+            - **Interface:** Streamlit
+            """
+        )
+
+    st.divider()
+    st.caption("AI-powered document question answering")
 
 
 # --------------------------------------------------
@@ -311,18 +418,26 @@ if submitted:
                 st.exception(error)
 
 
+
 # --------------------------------------------------
-# Display the latest answer and source passages on every rerun
-# This keeps source buttons available after clicking one.
+# Display the latest answer and source passages
 # --------------------------------------------------
 latest_result = st.session_state.get(latest_result_key)
 
 if latest_result:
-    st.markdown("### 📝 Answer")
-    st.write(latest_result["answer"])
+    st.divider()
+    st.markdown("## 💬 Answer")
 
-    st.markdown("### 📚 Source Passages")
+    with st.container(border=True):
+        st.markdown("### 📝 Response")
+        st.write(latest_result["answer"])
+
     sources = latest_result.get("sources", [])
+
+    st.markdown("## 📚 Supporting Evidence")
+    st.caption(
+        f"{len(sources)} source passage(s) retrieved for this answer."
+    )
 
     if sources:
         for number, source in enumerate(sources, start=1):
@@ -330,32 +445,45 @@ if latest_result:
             score = source.get("score")
             source_text = source.get("text", "")
 
-            label = f"Source {number} · PDF page {page_number}"
-            if score is not None:
-                label += f" · Similarity {score:.3f}"
+            title = f"Source {number} · Page {page_number}"
 
-            with st.expander(label):
+            if score is not None:
+                title += f" · Similarity {score:.3f}"
+
+            with st.container(border=True):
+                source_col, action_col = st.columns([4, 1])
+
+                with source_col:
+                    st.markdown(f"**{title}**")
+
+                with action_col:
+                    try:
+                        source_page = int(page_number)
+                    except (TypeError, ValueError):
+                        source_page = None
+
+                    if (
+                        source_page is not None
+                        and 1 <= source_page <= page_count
+                    ):
+                        st.button(
+                            "View page",
+                            key=f"source_page_{document_hash}_{number}",
+                            on_click=navigate_to_source_page,
+                            args=(
+                                source_page,
+                                preview_page_key,
+                                open_preview_key,
+                            ),
+                            use_container_width=True,
+                        )
+
                 st.write(source_text)
 
                 if score is not None:
                     st.caption(
-                        f"Retrieval similarity: {score:.3f}. "
-                        "This is not a confidence percentage."
-                    )
-
-                # Accept ordinary Python integers and integer-like values,
-                # but reject missing or nonnumeric page numbers.
-                try:
-                    source_page = int(page_number)
-                except (TypeError, ValueError):
-                    source_page = None
-
-                if source_page is not None and 1 <= source_page <= page_count:
-                    st.button(
-                        f"Preview PDF page {source_page}",
-                        key=f"source_page_{document_hash}_{number}",
-                        on_click=navigate_to_source_page,
-                        args=(source_page, preview_page_key, open_preview_key),
+                        f"Retrieval similarity: {score:.3f} "
+                        "(not a confidence percentage)"
                     )
     else:
         st.info("No relevant passages were found in this document.")
