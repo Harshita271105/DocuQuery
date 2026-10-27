@@ -115,6 +115,13 @@ st.divider()
 
 
 # --------------------------------------------------
+# Conversation history for the current session
+# --------------------------------------------------
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+
+
+# --------------------------------------------------
 # Question input
 # --------------------------------------------------
 st.markdown("### 💬 Ask your document")
@@ -144,6 +151,7 @@ with st.form("question_form"):
 # --------------------------------------------------
 # Retrieve passages and generate an answer
 # --------------------------------------------------
+
 if submitted:
     cleaned_question = question.strip()
 
@@ -161,6 +169,15 @@ if submitted:
                     model,
                     index,
                 )
+
+            # Save the question and result for this session.
+            st.session_state.chat_history.append(
+                {
+                    "question": cleaned_question,
+                    "answer": result["answer"],
+                    "sources": result.get("sources", []),
+                }
+            )
 
             st.divider()
             st.markdown("### 📝 Answer")
@@ -202,7 +219,7 @@ if submitted:
             else:
                 st.info(
                     "No source passages were returned. "
-                    "Check the document for supporting evidence."
+                    "The document may not contain enough relevant evidence."
                 )
 
         except Exception as error:
@@ -245,3 +262,45 @@ with st.sidebar:
         "Verify important claims using the displayed source passages "
         "and the original document."
     )
+
+
+    
+
+# --------------------------------------------------
+# Conversation history display
+# --------------------------------------------------
+if st.session_state.chat_history:
+    st.divider()
+
+    history_col, button_col = st.columns([4, 1])
+
+    with history_col:
+        st.markdown("### 🕘 Previous Questions")
+
+    with button_col:
+        if st.button("🗑️ Clear History", use_container_width=True):
+            st.session_state.chat_history = []
+            st.rerun()
+
+    # Exclude the latest question because its answer is already
+    # displayed in the main answer section.
+    previous_questions = st.session_state.chat_history[:-1]
+
+    for item in reversed(previous_questions):
+        with st.expander(item["question"]):
+            st.markdown("**Answer**")
+            st.write(item["answer"])
+
+            if item["sources"]:
+                st.markdown("**Sources**")
+
+                for source in item["sources"]:
+                    page_number = source.get("page_number", "Unknown")
+                    score = source.get("score")
+
+                    label = f"PDF page {page_number}"
+
+                    if score is not None:
+                        label += f" · Similarity {score:.3f}"
+
+                    st.caption(label)
