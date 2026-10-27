@@ -211,6 +211,7 @@ with col3:
 st.divider()
 
 
+
 # --------------------------------------------------
 # PDF preview and page navigation
 # --------------------------------------------------
@@ -229,25 +230,30 @@ with st.expander(
     )
 
     try:
+        from PIL import Image
+        import io
+
         with pymupdf.open(selected_pdf) as pdf_document:
             page = pdf_document[int(preview_page) - 1]
-            page_text = page.get_text("text")
+
+            # Render the original PDF page as an image.
+            pixmap = page.get_pixmap(
+                matrix=pymupdf.Matrix(1.5, 1.5),
+                alpha=False,
+            )
+
+            page_image = Image.open(
+                io.BytesIO(pixmap.tobytes("png"))
+            )
 
         st.caption(f"Page {int(preview_page)} of {page_count}")
 
-        if page_text.strip():
-            st.text_area(
-                "Page content",
-                value=page_text,
-                height=350,
-                disabled=True,
-                key=f"preview_content_{document_hash}_{int(preview_page)}",
-            )
-        else:
-            st.info(
-                "No extractable text was found on this page. "
-                "It may contain scanned images."
-            )
+        st.image(
+            page_image,
+            caption=f"{selected_pdf.name} — Page {int(preview_page)}",
+            use_container_width=True,
+        )
+
     except Exception as error:
         st.error(f"Could not preview this page: {error}")
 
