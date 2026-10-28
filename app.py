@@ -1,3 +1,18 @@
+from io import BytesIO
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.platypus import (
+    SimpleDocTemplate,
+    Paragraph,
+    Spacer,
+    Table,
+    TableStyle,
+)
+from xml.sax.saxutils import escape
+from datetime import datetime
 import hashlib
 from pathlib import Path
 import html
@@ -97,6 +112,92 @@ DEFAULT_PDF_PATH = Path(PDF_PATH)
 UPLOAD_DIR = Path("storage") / "uploads"
 MAX_UPLOAD_SIZE_MB = 50
 
+
+def create_pdf_report(question, answer, sources, document_name):
+    """Generate a downloadable PDF containing an answer and its sources."""
+    buffer = BytesIO()
+    generated_at = datetime.now().strftime("%d %B %Y, %I:%M %p")
+    pdf = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=0.65 * inch,
+        leftMargin=0.65 * inch,
+        topMargin=0.65 * inch,
+        bottomMargin=0.65 * inch,
+        title="DocuQuery Answer Report",
+    )
+
+    styles = getSampleStyleSheet()
+    styles.add(
+        ParagraphStyle(
+            name="ReportTitle",
+            parent=styles["Title"],
+            alignment=TA_CENTER,
+            textColor=colors.HexColor("#2457A7"),
+            spaceAfter=16,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="SourceText",
+            parent=styles["BodyText"],
+            fontSize=9,
+            leading=13,
+            spaceAfter=8,
+        )
+    )
+
+    story = [
+        Paragraph("DocuQuery Answer Report", styles["ReportTitle"]),
+        Paragraph(f"<b>Document:</b> {escape(document_name)}", styles["BodyText"]),
+        Spacer(1, 8),
+        Paragraph("Question", styles["Heading2"]),
+        Paragraph(escape(question), styles["BodyText"]),
+        Spacer(1, 10),
+        Paragraph("Answer", styles["Heading2"]),
+        Paragraph(escape(answer).replace("\n", "<br/>"), styles["BodyText"]),
+        Spacer(1, 12),
+        Paragraph("Supporting Sources", styles["Heading2"]),
+        Spacer(1, 6),
+        Paragraph(f"<b>Generated:</b> {escape(generated_at)}",styles["BodyText"],),
+        Spacer(1, 8),
+    ]
+    
+    if sources:
+        for number, source in enumerate(sources, start=1):
+            page_number = source.get("page_number", "Unknown")
+            score = source.get("score")
+            source_text = source.get("text", "")
+
+            story.append(
+                Paragraph(
+                    f"<b>Source {number} — PDF page {escape(str(page_number))}</b>",
+                    styles["Heading3"],
+                )
+            )
+
+            if score is not None:
+                story.append(
+                    Paragraph(
+                        f"Retrieval similarity: {float(score):.3f}",
+                        styles["SourceText"],
+                    )
+                )
+
+            story.append(
+                Paragraph(
+                    escape(str(source_text)).replace("\n", "<br/>"),
+                    styles["SourceText"],
+                )
+            )
+            story.append(Spacer(1, 8))
+    else:
+        story.append(
+            Paragraph("No supporting sources were returned.", styles["BodyText"])
+        )
+
+    pdf.build(story)
+    return buffer.getvalue()
 
 
 # --------------------------------------------------
@@ -465,6 +566,68 @@ if latest_result:
         st.write(latest_result["answer"])
 
     sources = latest_result.get("sources", [])
+
+    
+    # Export the answer and supporting sources
+    export_lines = [
+        "DocuQuery - Answer Report",
+        "=" * 35,
+        "",
+        f"Document: {selected_pdf.name}",
+        f"Question: {latest_result['question']}",
+        "",
+        "ANSWER",
+        "-" * 35,
+        latest_result["answer"],
+        "",
+        "SUPPORTING SOURCES",
+        "-" * 35,
+    ]
+
+    for number, source in enumerate(sources, start=1):
+        page_number = source.get("page_number", "Unknown")
+        score = source.get("score")
+        source_text = source.get("text", "")
+
+        export_lines.extend([
+            "",
+            f"Source {number} - PDF page {page_number}",
+        ])
+
+        if score is not None:
+            export_lines.append(
+                f"Retrieval similarity: {score:.3f}"
+            )
+
+        export_lines.append(source_text)
+
+    report_text = "\n".join(export_lines)
+
+    st.download_button(
+        label="📥 Download answer report (.txt)",
+        data=report_text,
+        file_name="docuquery_answer_report.txt",
+        mime="text/plain",
+        key=f"export_answer_{document_hash}",
+    )
+    st.caption(
+    f"Your report includes {len(sources)} supporting source passage(s)."
+)
+    report = create_pdf_report(
+        question=latest_result["question"],
+        answer=latest_result["answer"],
+        sources=sources,
+        document_name=selected_pdf.name,
+    )
+
+    st.download_button(
+        label="📄 Download answer report (.pdf)",
+        data=report,
+        file_name="docuquery_answer_report.pdf",
+        mime="application/pdf",
+        key=f"export_pdf_{document_hash}",
+    )
+
 
     st.markdown("## 📚 Supporting Evidence")
     st.caption(
