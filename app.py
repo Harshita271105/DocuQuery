@@ -23,7 +23,6 @@ from sentence_transformers import SentenceTransformer
 from index_cache import load_or_build_index
 from rag_pipeline import PDF_PATH, MODEL_NAME, answer_question
 
-
 # --------------------------------------------------
 # Page configuration
 # --------------------------------------------------
@@ -457,10 +456,10 @@ with st.expander(
         st.caption(f"Page {int(preview_page)} of {page_count}")
 
         st.image(
-    page_image,
-    caption=f"{selected_pdf.name} — Page {int(preview_page)}",
-    width=700,
-)
+            page_image,
+            caption=f"{selected_pdf.name} — Page {int(preview_page)}",
+            width=700,
+        )
 
     except Exception as error:
         st.error(f"Could not preview this page: {error}")
@@ -530,13 +529,18 @@ if submitted:
             with st.spinner(
                 "Searching the document and generating your answer..."
             ):
+                # Use only previous turns, not the current question.
+                previous_history = st.session_state.chat_history[-4:]
+
                 result = answer_question(
                     cleaned_question,
                     chunks,
                     model,
                     index,
+                    chat_history=previous_history,
                 )
 
+            # Keep the latest answer tied to the selected document.
             result_record = {
                 "question": cleaned_question,
                 "answer": result.get("answer", ""),
@@ -549,7 +553,6 @@ if submitted:
             st.error("An error occurred while answering your question.")
             with st.expander("Technical error details"):
                 st.exception(error)
-
 
 
 # --------------------------------------------------
@@ -671,8 +674,6 @@ if latest_result:
                             ),
                             use_container_width=True,
                         )
-
-                import html
 
                 safe_source_text = html.escape(str(source_text))
                 st.markdown(
