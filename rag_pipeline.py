@@ -15,6 +15,7 @@ LLM_MODEL = "gemini-3.5-flash-lite"
 CHUNK_SIZE = 1000
 OVERLAP = 200
 TOP_K = 3
+RETRIEVAL_CANDIDATES = 10
 MIN_SIMILARITY = 0.40
 
 
@@ -77,9 +78,8 @@ def build_search_index(chunks, model):
     return index
 
 
-
 def retrieve_passages(question, chunks, model, index):
-    """Retrieve relevant passages that meet the similarity threshold."""
+    """Retrieve candidate passages, filter them, and return the best results."""
     if not question.strip():
         return []
 
@@ -92,8 +92,11 @@ def retrieve_passages(question, chunks, model, index):
         normalize_embeddings=True,
     ).astype("float32")
 
-    k = min(TOP_K, index.ntotal)
-    scores, indices = index.search(query_embedding, k)
+    # Retrieve more candidates than the final number of passages.
+    # This gives the similarity filter a larger pool to evaluate.
+    candidate_k = min(RETRIEVAL_CANDIDATES, index.ntotal)
+
+    scores, indices = index.search(query_embedding, candidate_k)
 
     results = []
 
@@ -101,7 +104,7 @@ def retrieve_passages(question, chunks, model, index):
         if chunk_index < 0:
             continue
 
-        # Skip passages below the minimum relevance threshold.
+        # Exclude passages below the minimum relevance threshold.
         if float(score) < MIN_SIMILARITY:
             continue
 
@@ -113,8 +116,9 @@ def retrieve_passages(question, chunks, model, index):
             "score": float(score),
         })
 
-    return results
-
+    # FAISS returns matches in descending similarity order.
+    # Keep only the best three qualifying passages.
+    return results[:TOP_K]
 
 
 def generate_answer(question, passages, chat_history=None):
@@ -131,8 +135,10 @@ def generate_answer(question, passages, chat_history=None):
     )
 
     history_context = ""
+
     if chat_history:
         history_lines = []
+
         for item in chat_history[-4:]:
             history_lines.append(f"User: {item['question']}")
             history_lines.append(f"Assistant: {item['answer']}")
@@ -252,7 +258,6 @@ Instructions:
     except Exception as error:
         print(f"Follow-up question rewriting failed: {error}", flush=True)
         return question
-
 
 
 def answer_question(question, chunks, model, index, chat_history=None):
