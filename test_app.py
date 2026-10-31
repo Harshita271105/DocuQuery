@@ -243,3 +243,40 @@ def test_retrieval_filters_before_applying_final_top_k():
     assert len(results) == TOP_K
     assert [item["page_number"] for item in results] == [1, 3, 4]
     assert all(item["score"] >= MIN_SIMILARITY for item in results)
+
+
+def test_retrieval_returns_unique_pages():
+    """Only one passage per PDF page should appear in the results."""
+
+    chunks = [
+        {"page_number": 105, "text": "Page 105 passage A."},
+        {"page_number": 105, "text": "Page 105 passage B."},
+        {"page_number": 228, "text": "Page 228 passage."},
+        {"page_number": 229, "text": "Page 229 passage."},
+    ]
+
+    class FakeModel:
+        def encode(self, texts, **kwargs):
+            return np.array([[1.0, 0.0]], dtype="float32")
+
+    class FakeIndex:
+        ntotal = 4
+
+        def search(self, query_embedding, k):
+            return (
+                np.array([[0.95, 0.90, 0.85, 0.80]], dtype="float32"),
+                np.array([[0, 1, 2, 3]], dtype="int64"),
+            )
+
+    results = retrieve_passages(
+        "How many wells were drilled?",
+        chunks,
+        FakeModel(),
+        FakeIndex(),
+    )
+
+    assert len(results) == 3
+    assert [item["page_number"] for item in results] == [
+        105, 228, 229
+    ]
+    assert results[0]["text"] == "Page 105 passage A."

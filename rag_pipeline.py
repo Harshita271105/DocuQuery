@@ -82,8 +82,9 @@ def build_search_index(chunks, model):
     return index
 
 
+
 def retrieve_passages(question, chunks, model, index):
-    """Retrieve candidates, filter by similarity, and return the top results."""
+    """Retrieve relevant passages while avoiding duplicate PDF pages."""
 
     if not question.strip() or not chunks or index.ntotal == 0:
         return []
@@ -94,13 +95,11 @@ def retrieve_passages(question, chunks, model, index):
         normalize_embeddings=True,
     ).astype("float32")
 
-    # Retrieve more candidates than needed so filtering
-    # does not leave us with too few relevant passages.
     k = min(RETRIEVAL_CANDIDATES, index.ntotal)
-
     scores, indices = index.search(query_embedding, k)
 
     results = []
+    seen_pages = set()
 
     for score, chunk_index in zip(scores[0], indices[0]):
 
@@ -111,15 +110,24 @@ def retrieve_passages(question, chunks, model, index):
             continue
 
         chunk = chunks[int(chunk_index)]
+        page_number = chunk["page_number"]
+
+        # Keep only the highest-scoring passage from each page.
+        if page_number in seen_pages:
+            continue
+
+        seen_pages.add(page_number)
 
         results.append({
-            "page_number": chunk["page_number"],
+            "page_number": page_number,
             "text": chunk["text"],
             "score": float(score),
         })
 
-    # Apply final TOP_K only after similarity filtering.
-    return results[:TOP_K]
+        if len(results) == TOP_K:
+            break
+
+    return results
 
 
 def _format_history(chat_history):
